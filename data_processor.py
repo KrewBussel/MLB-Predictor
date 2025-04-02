@@ -3,6 +3,8 @@ import numpy as np
 import os
 from typing import List, Dict, Tuple
 from datetime import datetime
+from sklearn.preprocessing import StandardScaler
+import joblib
 
 class DataProcessor:
     # MLB Teams dictionary for standardization
@@ -17,147 +19,218 @@ class DataProcessor:
 
     def __init__(self):
         self.base_dir = 'data'
-        self.teams_dir = os.path.join(self.base_dir, 'teams')
+        self.seasons_dir = os.path.join(self.base_dir, 'seasons')
+        self.matchups_dir = os.path.join(self.base_dir, 'matchups')
         self._ensure_directories()
+        self.scaler = StandardScaler()
+        self.batter_stats = {}
+        self.pitcher_stats = {}
+        self.matchup_stats = {}
     
     def _ensure_directories(self):
-        """Create necessary directories for team-based organization."""
-        os.makedirs(self.teams_dir, exist_ok=True)
+        """Create necessary directories for season-based organization."""
+        # Create base directories
+        os.makedirs(self.seasons_dir, exist_ok=True)
+        os.makedirs(self.matchups_dir, exist_ok=True)
         
-        # Create directories for each team
-        for division in self.MLB_TEAMS.values():
-            for team in division:
-                team_dir = os.path.join(self.teams_dir, self._sanitize_team_name(team))
-                batters_dir = os.path.join(team_dir, 'batters')
-                pitchers_dir = os.path.join(team_dir, 'pitchers')
-                os.makedirs(batters_dir, exist_ok=True)
-                os.makedirs(pitchers_dir, exist_ok=True)
+        # Create directories for each season
+        current_year = datetime.now().year
+        for year in range(current_year - 1, current_year + 1):
+            season_dir = os.path.join(self.seasons_dir, str(year))
+            os.makedirs(os.path.join(season_dir, 'teams'), exist_ok=True)
     
-    def _sanitize_team_name(self, team_name: str) -> str:
-        """Convert team name to filesystem-friendly format."""
-        return team_name.lower().replace(' ', '_')
-    
-    def get_all_teams(self) -> List[str]:
-        """Get list of all MLB teams."""
-        return [team for division in self.MLB_TEAMS.values() for team in division]
-    
-    def get_team_batters(self, team: str) -> List[str]:
-        """Get list of available batters for a specific team."""
-        team_batters_dir = os.path.join(self.teams_dir, self._sanitize_team_name(team), 'batters')
-        if not os.path.exists(team_batters_dir):
-            return []
-        return [f.replace('.csv', '') for f in os.listdir(team_batters_dir) if f.endswith('.csv')]
-    
-    def get_team_pitchers(self, team: str) -> List[str]:
-        """Get list of available pitchers for a specific team."""
-        team_pitchers_dir = os.path.join(self.teams_dir, self._sanitize_team_name(team), 'pitchers')
-        if not os.path.exists(team_pitchers_dir):
-            return []
-        return [f.replace('.csv', '') for f in os.listdir(team_pitchers_dir) if f.endswith('.csv')]
-    
-    def load_batter_data(self, team: str, batter_name: str) -> pd.DataFrame:
-        """Load batter statistics from team-specific CSV file."""
-        file_path = os.path.join(self.teams_dir, self._sanitize_team_name(team), 'batters', f"{batter_name}.csv")
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Batter data file not found: {file_path}")
-        df = pd.read_csv(file_path)
-        
-        # Handle date conversion with error handling
-        try:
-            # Try to parse dates, adding current year if missing
-            def parse_date(date_str):
+    def get_available_seasons(self) -> List[int]:
+        """Get list of available seasons in the data."""
+        seasons = []
+        for item in os.listdir(self.seasons_dir):
+            if os.path.isdir(os.path.join(self.seasons_dir, item)):
                 try:
-                    # First try standard format
-                    return pd.to_datetime(date_str)
-                except:
-                    try:
-                        # Try with current year if only month day is provided
-                        current_year = datetime.now().year
-                        if len(date_str.split('-')) < 3 and len(date_str.split('/')) < 3:
-                            return pd.to_datetime(f"{current_year} {date_str}")
-                        return pd.NaT
-                    except:
-                        return pd.NaT  # Not a Time for invalid dates
+                    seasons.append(int(item))
+                except ValueError:
+                    continue
+        return sorted(seasons)
+    
+    def get_teams_for_season(self, season: int) -> List[str]:
+        """Get list of available teams for a specific season."""
+        teams_dir = os.path.join(self.seasons_dir, str(season), 'teams')
+        if not os.path.exists(teams_dir):
+            return []
+        return [d for d in os.listdir(teams_dir) if os.path.isdir(os.path.join(teams_dir, d))]
+    
+    def get_team_batters(self, season: int, team: str) -> List[str]:
+        """Get list of available batters for a specific team and season."""
+        batters_dir = os.path.join(self.seasons_dir, str(season), 'teams', team, 'batters')
+        if not os.path.exists(batters_dir):
+            return []
+        return [f.replace('.csv', '') for f in os.listdir(batters_dir) if f.endswith('.csv')]
+    
+    def get_team_pitchers(self, season: int, team: str) -> List[str]:
+        """Get list of available pitchers for a specific team and season."""
+        pitchers_dir = os.path.join(self.seasons_dir, str(season), 'teams', team, 'pitchers')
+        if not os.path.exists(pitchers_dir):
+            return []
+        return [f.replace('.csv', '') for f in os.listdir(pitchers_dir) if f.endswith('.csv')]
+    
+    def _parse_date(self, date_str: str, season: int) -> pd.Timestamp:
+        """Parse date string with season information."""
+        try:
+            # Convert month abbreviation and day to datetime
+            return pd.to_datetime(f"{date_str}, {season}", format="%b %d, %Y")
+        except:
+            # If parsing fails, return None
+            return None
+
+    def load_batter_data(self, season: int, team: str, batter_name: str) -> pd.DataFrame:
+        """Load batter statistics for a specific season and team."""
+        file_path = os.path.join(self.seasons_dir, str(season), 'teams', team, 'batters', f"{batter_name}.csv")
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Batter data file not found for {season} {team}: {file_path}")
             
-            df['Date'] = df['Date'].apply(parse_date)
-            # Remove rows with invalid dates
-            df = df[~df['Date'].isna()]
-        except Exception as e:
-            print(f"Warning: Could not parse dates for {batter_name}: {e}")
-            # Create a default date if parsing fails
-            df['Date'] = pd.to_datetime('2024-01-01')
-        
+        df = pd.read_csv(file_path)
+        # Parse dates with season information
+        df['Date'] = df['Date'].apply(lambda x: self._parse_date(x, season))
         return df.sort_values('Date', ascending=False)
     
-    def load_pitcher_data(self, team: str, pitcher_name: str) -> pd.DataFrame:
-        """Load pitcher statistics from team-specific CSV file."""
-        file_path = os.path.join(self.teams_dir, self._sanitize_team_name(team), 'pitchers', f"{pitcher_name}.csv")
+    def load_pitcher_data(self, season: int, team: str, pitcher_name: str) -> pd.DataFrame:
+        """Load pitcher statistics for a specific season and team."""
+        file_path = os.path.join(self.seasons_dir, str(season), 'teams', team, 'pitchers', f"{pitcher_name}.csv")
         if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Pitcher data file not found: {file_path}")
-        df = pd.read_csv(file_path)
-        
-        # Handle date conversion with error handling
-        try:
-            # Try to parse dates, adding current year if missing
-            def parse_date(date_str):
-                try:
-                    # First try standard format
-                    return pd.to_datetime(date_str)
-                except:
-                    try:
-                        # Try with current year if only month day is provided
-                        current_year = datetime.now().year
-                        if len(str(date_str).split('-')) < 3 and len(str(date_str).split('/')) < 3:
-                            return pd.to_datetime(f"{current_year} {date_str}")
-                        return pd.NaT
-                    except:
-                        return pd.NaT  # Not a Time for invalid dates
+            raise FileNotFoundError(f"Pitcher data file not found for {season} {team}: {file_path}")
             
-            df['Date'] = df['Date'].apply(parse_date)
-            # Remove rows with invalid dates
-            df = df[~df['Date'].isna()]
-        except Exception as e:
-            print(f"Warning: Could not parse dates for {pitcher_name}: {e}")
-            # Create a default date if parsing fails
-            df['Date'] = pd.to_datetime('2024-01-01')
-        
+        df = pd.read_csv(file_path)
+        # Parse dates with season information
+        df['Date'] = df['Date'].apply(lambda x: self._parse_date(x, season))
         return df.sort_values('Date', ascending=False)
     
-    def prepare_matchup_features(self, batter_team: str, batter_name: str, pitcher_team: str, pitcher_name: str) -> np.ndarray:
+    def load_matchup_data(self, batter_name: str, pitcher_name: str) -> pd.DataFrame:
+        """Load head-to-head matchup data between a batter and pitcher."""
+        matchup_file = os.path.join(self.matchups_dir, f"{batter_name}_vs_{pitcher_name}.csv")
+        if os.path.exists(matchup_file):
+            return pd.read_csv(matchup_file)
+        return None
+
+    def process_batter_data(self, df: pd.DataFrame) -> Dict:
+        """Process batter data into features."""
+        if df is None or df.empty:
+            return None
+            
+        # Calculate recent performance metrics
+        recent_games = df.head(10)  # Last 10 games
+        
+        features = {
+            'recent_games': len(recent_games),
+            'recent_hits': recent_games['H'].sum(),
+            'recent_hr': recent_games['HR'].sum(),
+            'recent_bb': recent_games['BB'].sum(),
+            'recent_so': recent_games['SO'].sum(),
+            'recent_avg': recent_games['BA'].mean(),
+            'recent_ops': recent_games['OPS'].mean(),
+            'recent_wpa': recent_games['WPA'].sum(),
+            'recent_re24': recent_games['RE24'].sum(),
+            'season_games': len(df),
+            'season_hits': df['H'].sum(),
+            'season_hr': df['HR'].sum(),
+            'season_bb': df['BB'].sum(),
+            'season_so': df['SO'].sum(),
+            'season_avg': df['BA'].mean(),
+            'season_ops': df['OPS'].mean(),
+            'season_wpa': df['WPA'].sum(),
+            'season_re24': df['RE24'].sum()
+        }
+        return features
+
+    def process_pitcher_data(self, df: pd.DataFrame) -> Dict:
+        """Process pitcher data into features."""
+        if df is None or df.empty:
+            return None
+            
+        # Calculate recent performance metrics
+        recent_games = df.head(5)  # Last 5 games
+        
+        features = {
+            'recent_games': len(recent_games),
+            'recent_ip': recent_games['IP'].sum(),
+            'recent_hits': recent_games['H'].sum(),
+            'recent_er': recent_games['ER'].sum(),
+            'recent_bb': recent_games['BB'].sum(),
+            'recent_so': recent_games['SO'].sum(),
+            'recent_era': recent_games['ERA'].mean(),
+            'recent_fip': recent_games['FIP'].mean(),
+            'recent_wpa': recent_games['WPA'].sum(),
+            'recent_re24': recent_games['RE24'].sum(),
+            'season_games': len(df),
+            'season_ip': df['IP'].sum(),
+            'season_hits': df['H'].sum(),
+            'season_er': df['ER'].sum(),
+            'season_bb': df['BB'].sum(),
+            'season_so': df['SO'].sum(),
+            'season_era': df['ERA'].mean(),
+            'season_fip': df['FIP'].mean(),
+            'season_wpa': df['WPA'].sum(),
+            'season_re24': df['RE24'].sum()
+        }
+        return features
+
+    def process_matchup_data(self, matchup_data: pd.DataFrame) -> Dict:
+        """Process matchup data into features."""
+        if matchup_data is None or matchup_data.empty:
+            return None
+            
+        features = {
+            'matchup_games': matchup_data['G'].iloc[0],
+            'matchup_ab': matchup_data['AB'].iloc[0],
+            'matchup_hits': matchup_data['H'].iloc[0],
+            'matchup_hr': matchup_data['HR'].iloc[0],
+            'matchup_bb': matchup_data['BB'].iloc[0],
+            'matchup_so': matchup_data['SO'].iloc[0],
+            'matchup_avg': matchup_data['AVG'].iloc[0],
+            'matchup_ops': matchup_data['OPS'].iloc[0]
+        }
+        return features
+
+    def prepare_features(self, season: int, batter_team: str, batter_name: str, 
+                        pitcher_team: str, pitcher_name: str) -> Dict:
+        """Prepare features including matchup data if available."""
+        # Load individual stats
+        batter_data = self.load_batter_data(season, batter_team, batter_name)
+        pitcher_data = self.load_pitcher_data(season, pitcher_team, pitcher_name)
+        
+        # Load matchup data
+        matchup_data = self.load_matchup_data(batter_name, pitcher_name)
+        matchup_features = self.process_matchup_data(matchup_data)
+        
+        # Combine all features
+        features = {}
+        
+        # Add individual stats
+        if batter_data is not None:
+            features.update(self.process_batter_data(batter_data))
+        if pitcher_data is not None:
+            features.update(self.process_pitcher_data(pitcher_data))
+            
+        # Add matchup stats if available
+        if matchup_features is not None:
+            features.update(matchup_features)
+            
+        return features
+
+    def prepare_matchup_features(self, season: int, batter_team: str, batter_name: str, 
+                               pitcher_team: str, pitcher_name: str) -> np.ndarray:
         """Prepare features for a specific batter-pitcher matchup."""
         try:
-            # Load data
-            batter_df = self.load_batter_data(batter_team, batter_name)
-            pitcher_df = self.load_pitcher_data(pitcher_team, pitcher_name)
+            # Get all features
+            features = self.prepare_features(season, batter_team, batter_name, pitcher_team, pitcher_name)
             
-            # Ensure required columns exist in batter dataframe
-            required_batter_cols = ['H', 'SO', 'BA', 'OBP', 'SLG', 'PA', 'OPS', 'WPA', 'RE24', 'DFS(DK)']
-            for col in required_batter_cols:
-                if col not in batter_df.columns:
-                    print(f"Warning: Column {col} missing from batter data. Using zeros.")
-                    batter_df[col] = 0
+            # Convert to numpy array
+            feature_array = np.array(list(features.values()))
             
-            # Ensure required columns exist in pitcher dataframe
-            required_pitcher_cols = ['ERA', 'SO', 'HR', 'BB', 'H', 'IP', 'FIP', 'WPA', 'RE24', 'DFS(DK)']
-            for col in required_pitcher_cols:
-                if col not in pitcher_df.columns:
-                    print(f"Warning: Column {col} missing from pitcher data. Using zeros.")
-                    pitcher_df[col] = 0
+            # Reshape for model input
+            return feature_array.reshape(1, -1)
             
-            # Calculate features
-            batter_features = self._calculate_batter_features(batter_df, pitcher_team)
-            pitcher_features = self._calculate_pitcher_features(pitcher_df, batter_team)
-            matchup_features = self._calculate_matchup_features(batter_df, pitcher_df)
-            
-            # Combine features
-            features = np.concatenate([batter_features, pitcher_features, matchup_features])
-            return features
-        
         except Exception as e:
-            print(f"Error preparing matchup features: {e}")
-            # Return default features array of appropriate length (33 = 16 batter + 16 pitcher + 4 matchup)
-            return np.zeros(36)
-    
+            print(f"Error preparing features: {e}")
+            return None
+
     def _calculate_batter_features(self, df: pd.DataFrame, opposing_team: str) -> np.ndarray:
         """Calculate batter features including performance against specific team."""
         try:
