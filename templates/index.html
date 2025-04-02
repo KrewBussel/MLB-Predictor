@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MLB Performance Predictor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .result-box {
+            margin-top: 20px;
+            padding: 20px;
+            border-radius: 5px;
+            display: none;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">MLB Performance Predictor</h1>
+        
+        <form id="predictionForm" class="mb-4">
+            <div class="mb-3">
+                <label for="batter" class="form-label">Select Batter</label>
+                <select class="form-select" id="batter" name="batter" required>
+                    <option value="">Choose a batter...</option>
+                    {% for batter in batters %}
+                    <option value="{{ batter }}">{{ batter }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <div class="mb-3">
+                <label for="pitcher" class="form-label">Select Pitcher</label>
+                <select class="form-select" id="pitcher" name="pitcher" required>
+                    <option value="">Choose a pitcher...</option>
+                    {% for pitcher in pitchers %}
+                    <option value="{{ pitcher }}">{{ pitcher }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            
+            <button type="submit" class="btn btn-primary w-100">Predict Hits</button>
+        </form>
+        
+        <div class="loading">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Calculating prediction...</p>
+        </div>
+        
+        <div class="result-box alert alert-info">
+            <h4 class="alert-heading">Prediction Results</h4>
+            <p class="mb-0">Predicted hits: <span id="prediction">-</span></p>
+            <p class="mb-0">Confidence level: <span id="confidence">-</span>%</p>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('predictionForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const batter = document.getElementById('batter').value;
+            const pitcher = document.getElementById('pitcher').value;
+            
+            // Show loading spinner
+            document.querySelector('.loading').style.display = 'block';
+            document.querySelector('.result-box').style.display = 'none';
+            
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ batter, pitcher }),
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('prediction').textContent = data.prediction.toFixed(2);
+                    document.getElementById('confidence').textContent = data.confidence.toFixed(1);
+                    document.querySelector('.result-box').style.display = 'block';
+                } else {
+                    alert(data.error || 'An error occurred');
+                }
+            } catch (error) {
+                alert('An error occurred while making the prediction');
+            } finally {
+                document.querySelector('.loading').style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html> 
