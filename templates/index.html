@@ -36,24 +36,46 @@
         <h1 class="text-center mb-4">MLB Performance Predictor</h1>
         
         <form id="predictionForm" class="mb-4">
-            <div class="mb-3">
-                <label for="batter" class="form-label">Select Batter</label>
-                <select class="form-select" id="batter" name="batter" required>
-                    <option value="">Choose a batter...</option>
-                    {% for batter in batters %}
-                    <option value="{{ batter }}">{{ batter }}</option>
-                    {% endfor %}
-                </select>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="batterTeam" class="form-label">Select Batter Team</label>
+                    <select class="form-select" id="batterTeam" name="batterTeam" required>
+                        <option value="">Choose a team...</option>
+                        {% for team, data in team_data.items() %}
+                            {% if data.batters %}
+                            <option value="{{ team }}">{{ team }}</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="col-md-6 mb-3">
+                    <label for="batterName" class="form-label">Select Batter</label>
+                    <select class="form-select" id="batterName" name="batterName" required disabled>
+                        <option value="">Choose a batter...</option>
+                    </select>
+                </div>
             </div>
             
-            <div class="mb-3">
-                <label for="pitcher" class="form-label">Select Pitcher</label>
-                <select class="form-select" id="pitcher" name="pitcher" required>
-                    <option value="">Choose a pitcher...</option>
-                    {% for pitcher in pitchers %}
-                    <option value="{{ pitcher }}">{{ pitcher }}</option>
-                    {% endfor %}
-                </select>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="pitcherTeam" class="form-label">Select Pitcher Team</label>
+                    <select class="form-select" id="pitcherTeam" name="pitcherTeam" required>
+                        <option value="">Choose a team...</option>
+                        {% for team, data in team_data.items() %}
+                            {% if data.pitchers %}
+                            <option value="{{ team }}">{{ team }}</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="col-md-6 mb-3">
+                    <label for="pitcherName" class="form-label">Select Pitcher</label>
+                    <select class="form-select" id="pitcherName" name="pitcherName" required disabled>
+                        <option value="">Choose a pitcher...</option>
+                    </select>
+                </div>
             </div>
             
             <button type="submit" class="btn btn-primary w-100">Predict Hits</button>
@@ -74,11 +96,56 @@
     </div>
 
     <script>
+        // Team data from backend
+        const teamData = JSON.parse('{{ team_data|tojson }}');
+        
+        // When batter team is selected, populate batter select
+        document.getElementById('batterTeam').addEventListener('change', function() {
+            const batterTeam = this.value;
+            const batterSelect = document.getElementById('batterName');
+            
+            batterSelect.innerHTML = '<option value="">Choose a batter...</option>';
+            batterSelect.disabled = true;
+            
+            if (batterTeam) {
+                const batters = teamData[batterTeam].batters;
+                batters.forEach(batter => {
+                    const option = document.createElement('option');
+                    option.value = batter;
+                    option.textContent = batter;
+                    batterSelect.appendChild(option);
+                });
+                batterSelect.disabled = false;
+            }
+        });
+        
+        // When pitcher team is selected, populate pitcher select
+        document.getElementById('pitcherTeam').addEventListener('change', function() {
+            const pitcherTeam = this.value;
+            const pitcherSelect = document.getElementById('pitcherName');
+            
+            pitcherSelect.innerHTML = '<option value="">Choose a pitcher...</option>';
+            pitcherSelect.disabled = true;
+            
+            if (pitcherTeam) {
+                const pitchers = teamData[pitcherTeam].pitchers;
+                pitchers.forEach(pitcher => {
+                    const option = document.createElement('option');
+                    option.value = pitcher;
+                    option.textContent = pitcher;
+                    pitcherSelect.appendChild(option);
+                });
+                pitcherSelect.disabled = false;
+            }
+        });
+
         document.getElementById('predictionForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
-            const batter = document.getElementById('batter').value;
-            const pitcher = document.getElementById('pitcher').value;
+            const batterTeam = document.getElementById('batterTeam').value;
+            const batterName = document.getElementById('batterName').value;
+            const pitcherTeam = document.getElementById('pitcherTeam').value;
+            const pitcherName = document.getElementById('pitcherName').value;
             
             // Show loading spinner
             document.querySelector('.loading').style.display = 'block';
@@ -90,7 +157,12 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ batter, pitcher }),
+                    body: JSON.stringify({ 
+                        batter_team: batterTeam, 
+                        batter_name: batterName,
+                        pitcher_team: pitcherTeam,
+                        pitcher_name: pitcherName
+                    }),
                 });
                 
                 const data = await response.json();
